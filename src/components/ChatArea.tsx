@@ -880,7 +880,7 @@ export const ChatArea: React.FC<ChatAreaProps> = ({ onOpenInfoModal, onBackMobil
                             <button
                               type="button"
                               onClick={() => deleteMessage(msg.id)}
-                              className="opacity-0 group-hover:opacity-100 hover:text-rose-300 p-0.5 transition cursor-pointer"
+                              className="opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-rose-300 p-1 transition cursor-pointer"
                               title="Delete message for all"
                             >
                               <Trash2 className="w-3 h-3" />
