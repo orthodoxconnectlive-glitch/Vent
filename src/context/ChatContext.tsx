@@ -745,19 +745,27 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     const formData = new FormData();
     formData.append('file', file);
 
-    const res = await safeFetchJson<{
-      file_url: string;
-      file_name: string;
-      file_size: number;
-      media_type: MediaType;
-    }>('/api/upload', {
+    const res = await safeFetchJson<any>('/api/upload', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
       body: formData,
     });
 
     if (res.ok && res.data) {
-      return res.data;
+      // Normalize the two server response shapes:
+      // - Cloudflare Worker: { file: { id, name, url, size, type } }
+      // - Legacy Express:    { file_url, file_name, file_size, media_type }
+      const d = res.data;
+      const f = d.file ?? d;
+      const rawType: string = f.type ?? f.media_type ?? 'none';
+      const mediaType: MediaType =
+        rawType === 'image' || rawType === 'video' || rawType === 'audio' ? rawType : 'none';
+      return {
+        file_url: f.url ?? f.file_url,
+        file_name: f.name ?? f.file_name,
+        file_size: f.size ?? f.file_size,
+        media_type: mediaType,
+      };
     }
 
     // Fallback to client-side data URL on upload endpoint error
