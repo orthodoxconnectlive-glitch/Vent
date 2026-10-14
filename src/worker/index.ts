@@ -918,6 +918,102 @@ export default {
       return json({ success: true, id: msgId });
     }
 
+    // Clear all messages in a conversation (mirrors legacy Express POST /api/conversations/:id/clear)
+    const convClearMatch = path.match(/^\/api\/conversations\/([^/]+)\/clear$/);
+    if (convClearMatch && method === 'POST') {
+      const authUser = await getAuthUser();
+      if (!authUser) return json({ error: 'Unauthorized' }, 401);
+
+      const convId = convClearMatch[1];
+      const isSuper = authUser.email.toLowerCase() === superAdminEmail || authUser.role === 'admin';
+      const member = await env.DB.prepare(
+        'SELECT 1 AS ok FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
+      )
+        .bind(convId, authUser.id)
+        .first();
+      if (!member && !isSuper) return json({ error: 'Access denied' }, 403);
+
+      // Remove conversation media objects from R2 (best effort)
+      const clearMedia = await env.DB.prepare(
+        `SELECT media_url FROM messages WHERE conversation_id = ? AND media_url LIKE '/api/media/%'`
+      )
+        .bind(convId)
+        .all<{ media_url: string }>();
+      if (env.MEDIA_BUCKET) {
+        for (const row of clearMedia.results || []) {
+          const key = (row.media_url || '').replace(/^\/api\/media\//, '');
+          if (key) {
+            try {
+              await env.MEDIA_BUCKET.delete(key);
+            } catch {
+              /* best effort */
+            }
+          }
+        }
+      }
+      await env.DB.prepare(
+        `DELETE FROM media_files WHERE file_url IN (SELECT media_url FROM messages WHERE conversation_id = ?)`
+      )
+        .bind(convId)
+        .run();
+
+      await env.DB.prepare('DELETE FROM messages WHERE conversation_id = ?').bind(convId).run();
+      await env.DB.prepare(`UPDATE conversations SET updated_at = datetime('now') WHERE id = ?`)
+        .bind(convId)
+        .run();
+
+      return json({ success: true, conversation_id: convId });
+    }
+
+    // Delete conversation completely: messages, members, conversation record
+    // (mirrors legacy Express DELETE /api/conversations/:id)
+    const convDeleteMatch = path.match(/^\/api\/conversations\/([^/]+)$/);
+    if (convDeleteMatch && method === 'DELETE') {
+      const authUser = await getAuthUser();
+      if (!authUser) return json({ error: 'Unauthorized' }, 401);
+
+      const convId = convDeleteMatch[1];
+      const isSuper = authUser.email.toLowerCase() === superAdminEmail || authUser.role === 'admin';
+      const member = await env.DB.prepare(
+        'SELECT 1 AS ok FROM conversation_members WHERE conversation_id = ? AND user_id = ?'
+      )
+        .bind(convId, authUser.id)
+        .first();
+      if (!member && !isSuper) return json({ error: 'Access denied' }, 403);
+
+      // Remove conversation media objects from R2 (best effort)
+      const delMedia = await env.DB.prepare(
+        `SELECT media_url FROM messages WHERE conversation_id = ? AND media_url LIKE '/api/media/%'`
+      )
+        .bind(convId)
+        .all<{ media_url: string }>();
+      if (env.MEDIA_BUCKET) {
+        for (const row of delMedia.results || []) {
+          const key = (row.media_url || '').replace(/^\/api\/media\//, '');
+          if (key) {
+            try {
+              await env.MEDIA_BUCKET.delete(key);
+            } catch {
+              /* best effort */
+            }
+          }
+        }
+      }
+      await env.DB.prepare(
+        `DELETE FROM media_files WHERE file_url IN (SELECT media_url FROM messages WHERE conversation_id = ?)`
+      )
+        .bind(convId)
+        .run();
+
+      await env.DB.prepare('DELETE FROM messages WHERE conversation_id = ?').bind(convId).run();
+      await env.DB.prepare('DELETE FROM conversation_members WHERE conversation_id = ?')
+        .bind(convId)
+        .run();
+      await env.DB.prepare('DELETE FROM conversations WHERE id = ?').bind(convId).run();
+
+      return json({ success: true, conversation_id: convId });
+    }
+
     // -------------------------------------------------------------
     // MEDIA UPLOAD (Cloudflare R2 Bucket Integration)
     // -------------------------------------------------------------
